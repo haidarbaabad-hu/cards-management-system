@@ -53,27 +53,43 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  query, 
+  orderBy,
+  setDoc
+} from 'firebase/firestore';
+
+// Firebase Configuration
+const firebaseConfig = {
+  apiKey: 'AIzaSyBbromp0P5U6Gi2o8ODlNN1WoQtlfKq-LY',
+  authDomain: 'cards-management-system-534b4.firebaseapp.com',
+  projectId: 'cards-management-system-534b4',
+  storageBucket: 'cards-management-system-534b4.firebasestorage.app',
+  messagingSenderId: '1082497720645',
+  appId: '1:1082497720645:web:edb576805d345aaf799e2c'
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// Initial Data
-const INITIAL_CATEGORIES: Category[] = [
-  { id: '1', name: '100', price: 100 },
-  { id: '2', name: '250', price: 250 },
-  { id: '3', name: '500', price: 500 },
-];
-
-const INITIAL_DISTRIBUTORS: Distributor[] = [
-  { id: 'd1', name: 'أحمد الموزع', stock: {} },
-  { id: 'd2', name: 'خالد الموزع', stock: {} },
-];
-
-const INITIAL_CLIENTS: Client[] = [
-  { id: 'c1', name: 'محل السعادة' },
-  { id: 'c2', name: 'سوبر ماركت النور' },
-];
+// Initial Data (Cleared for Firebase)
+const INITIAL_CATEGORIES: Category[] = [];
+const INITIAL_DISTRIBUTORS: Distributor[] = [];
+const INITIAL_CLIENTS: Client[] = [];
 
 type Tab = 'dashboard' | 'categories' | 'distributors' | 'clients' | 'transactions' | 'reports';
 
@@ -95,22 +111,10 @@ interface ClientStats {
 
 export default function App() {
   // State
-  const [categories, setCategories] = useState<Category[]>(() => {
-    const saved = localStorage.getItem('categories');
-    return saved ? JSON.parse(saved) : INITIAL_CATEGORIES;
-  });
-  const [distributors, setDistributors] = useState<Distributor[]>(() => {
-    const saved = localStorage.getItem('distributors');
-    return saved ? JSON.parse(saved) : INITIAL_DISTRIBUTORS;
-  });
-  const [clients, setClients] = useState<Client[]>(() => {
-    const saved = localStorage.getItem('clients');
-    return saved ? JSON.parse(saved) : INITIAL_CLIENTS;
-  });
-  const [transactions, setTransactions] = useState<Transaction[]>(() => {
-    const saved = localStorage.getItem('transactions');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [distributors, setDistributors] = useState<Distributor[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
 
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [showModal, setShowModal] = useState<string | null>(null);
@@ -317,13 +321,28 @@ export default function App() {
     });
   };
 
-  // Persistence
+  // Firebase Sync
   useEffect(() => {
-    localStorage.setItem('categories', JSON.stringify(categories));
-    localStorage.setItem('distributors', JSON.stringify(distributors));
-    localStorage.setItem('clients', JSON.stringify(clients));
-    localStorage.setItem('transactions', JSON.stringify(transactions));
-  }, [categories, distributors, clients, transactions]);
+    const unsubCategories = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      setCategories(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Category)));
+    });
+    const unsubDistributors = onSnapshot(collection(db, 'distributors'), (snapshot) => {
+      setDistributors(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Distributor)));
+    });
+    const unsubClients = onSnapshot(collection(db, 'clients'), (snapshot) => {
+      setClients(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Client)));
+    });
+    const unsubTransactions = onSnapshot(query(collection(db, 'transactions'), orderBy('date', 'desc')), (snapshot) => {
+      setTransactions(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Transaction)));
+    });
+
+    return () => {
+      unsubCategories();
+      unsubDistributors();
+      unsubClients();
+      unsubTransactions();
+    };
+  }, []);
 
   // Success message auto-hide
   useEffect(() => {
@@ -428,82 +447,132 @@ export default function App() {
   }, [transactions, distributors, clients, categories]);
 
   // Handlers
-  const addCategory = (cat: Omit<Category, 'id'>) => {
-    const newCat = { ...cat, id: Date.now().toString() };
-    setCategories([...categories, newCat]);
-    setShowModal(null);
-    setSuccessMessage('تمت إضافة الفئة بنجاح');
+  const addCategory = async (cat: Omit<Category, 'id'>) => {
+    try {
+      await addDoc(collection(db, 'categories'), cat);
+      setShowModal(null);
+      setSuccessMessage('تمت إضافة الفئة بنجاح');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const updateCategory = (cat: Category) => {
-    setCategories(categories.map(c => c.id === cat.id ? cat : c));
-    setShowModal(null);
-    setEditingItem(null);
-    setSuccessMessage('تم تحديث الفئة بنجاح');
+  const updateCategory = async (cat: Category) => {
+    try {
+      const { id, ...data } = cat;
+      await updateDoc(doc(db, 'categories', id), data);
+      setShowModal(null);
+      setEditingItem(null);
+      setSuccessMessage('تم تحديث الفئة بنجاح');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const deleteCategory = (id: string) => {
-    setCategories(categories.filter(c => c.id !== id));
-    setConfirmDelete(null);
-    setSuccessMessage('تم حذف الفئة');
+  const deleteCategory = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'categories', id));
+      setConfirmDelete(null);
+      setSuccessMessage('تم حذف الفئة');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const addDistributor = (name: string) => {
-    setDistributors([...distributors, { id: Date.now().toString(), name, stock: {} }]);
-    setShowModal(null);
-    setSuccessMessage('تمت إضافة الموزع بنجاح');
+  const addDistributor = async (name: string) => {
+    try {
+      await addDoc(collection(db, 'distributors'), { name, stock: {} });
+      setShowModal(null);
+      setSuccessMessage('تمت إضافة الموزع بنجاح');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const updateDistributor = (dist: Distributor) => {
-    setDistributors(distributors.map(d => d.id === dist.id ? dist : d));
-    setShowModal(null);
-    setEditingItem(null);
-    setSuccessMessage('تم تحديث بيانات الموزع بنجاح');
+  const updateDistributor = async (dist: Distributor) => {
+    try {
+      const { id, ...data } = dist;
+      await updateDoc(doc(db, 'distributors', id), data);
+      setShowModal(null);
+      setEditingItem(null);
+      setSuccessMessage('تم تحديث بيانات الموزع بنجاح');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const deleteDistributor = (id: string) => {
-    setDistributors(distributors.filter(d => d.id !== id));
-    setConfirmDelete(null);
-    setSuccessMessage('تم حذف الموزع');
+  const deleteDistributor = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'distributors', id));
+      setConfirmDelete(null);
+      setSuccessMessage('تم حذف الموزع');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const addClient = (name: string) => {
-    setClients([...clients, { id: Date.now().toString(), name }]);
-    setShowModal(null);
-    setSuccessMessage('تمت إضافة العميل بنجاح');
+  const addClient = async (name: string) => {
+    try {
+      await addDoc(collection(db, 'clients'), { name });
+      setShowModal(null);
+      setSuccessMessage('تمت إضافة العميل بنجاح');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const updateClient = (client: Client) => {
-    setClients(clients.map(c => c.id === client.id ? client : c));
-    setShowModal(null);
-    setEditingItem(null);
-    setSuccessMessage('تم تحديث بيانات العميل بنجاح');
+  const updateClient = async (client: Client) => {
+    try {
+      const { id, ...data } = client;
+      await updateDoc(doc(db, 'clients', id), data);
+      setShowModal(null);
+      setEditingItem(null);
+      setSuccessMessage('تم تحديث بيانات العميل بنجاح');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const deleteClient = (id: string) => {
-    setClients(clients.filter(c => c.id !== id));
-    setConfirmDelete(null);
-    setSuccessMessage('تم حذف العميل');
+  const deleteClient = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'clients', id));
+      setConfirmDelete(null);
+      setSuccessMessage('تم حذف العميل');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const addTransaction = (tx: Omit<Transaction, 'id'>) => {
-    const newTx = { ...tx, id: Date.now().toString() };
-    setTransactions([newTx, ...transactions]);
-    setShowModal(null);
-    setSuccessMessage('تمت العملية بنجاح');
+  const addTransaction = async (tx: Omit<Transaction, 'id'>) => {
+    try {
+      await addDoc(collection(db, 'transactions'), tx);
+      setShowModal(null);
+      setSuccessMessage('تمت العملية بنجاح');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const updateTransaction = (tx: Transaction) => {
-    setTransactions(transactions.map(t => t.id === tx.id ? tx : t));
-    setShowModal(null);
-    setEditingItem(null);
-    setSuccessMessage('تم تحديث العملية بنجاح');
+  const updateTransaction = async (tx: Transaction) => {
+    try {
+      const { id, ...data } = tx;
+      await updateDoc(doc(db, 'transactions', id), data);
+      setShowModal(null);
+      setEditingItem(null);
+      setSuccessMessage('تم تحديث العملية بنجاح');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const deleteTransaction = (id: string) => {
-    setTransactions(transactions.filter(t => t.id !== id));
-    setConfirmDelete(null);
-    setSuccessMessage('تم حذف العملية');
+  const deleteTransaction = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'transactions', id));
+      setConfirmDelete(null);
+      setSuccessMessage('تم حذف العملية');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   // UI Components
@@ -617,7 +686,7 @@ export default function App() {
                   <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">إجمالي المبيعات</span>
                 </div>
                 <div className="text-3xl font-black text-slate-900">
-                  {Object.values(calculations.clientStats).reduce<number>((acc, curr) => acc + (curr as ClientStats).totalReceivedValue, 0).toLocaleString()} <span className="text-sm font-normal text-slate-400">ر.س</span>
+                  {Object.values(calculations.clientStats).reduce<number>((acc, curr) => acc + (curr as ClientStats).totalReceivedValue, 0).toLocaleString()} <span className="text-sm font-normal text-slate-400">ر.ي</span>
                 </div>
               </Card>
 
@@ -629,7 +698,7 @@ export default function App() {
                   <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-1 rounded-lg">إجمالي الديون</span>
                 </div>
                 <div className="text-3xl font-black text-slate-900">
-                  {Object.values(calculations.distStats).reduce<number>((acc, curr) => acc + ((curr as DistStats).deliveredValue - (curr as DistStats).totalDeposited), 0).toLocaleString()} <span className="text-sm font-normal text-slate-400">ر.س</span>
+                  {Object.values(calculations.distStats).reduce<number>((acc, curr) => acc + ((curr as DistStats).deliveredValue - (curr as DistStats).totalDeposited), 0).toLocaleString()} <span className="text-sm font-normal text-slate-400">ر.ي</span>
                 </div>
               </Card>
 
@@ -641,7 +710,7 @@ export default function App() {
                   <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">إجمالي التحصيل</span>
                 </div>
                 <div className="text-3xl font-black text-slate-900">
-                  {Object.values(calculations.distStats).reduce<number>((acc, curr) => acc + (curr as DistStats).totalCollected, 0).toLocaleString()} <span className="text-sm font-normal text-slate-400">ر.س</span>
+                  {Object.values(calculations.distStats).reduce<number>((acc, curr) => acc + (curr as DistStats).totalCollected, 0).toLocaleString()} <span className="text-sm font-normal text-slate-400">ر.ي</span>
                 </div>
               </Card>
 
@@ -675,7 +744,7 @@ export default function App() {
                     <div className="flex items-start justify-between">
                       <div>
                         <h4 className="text-xl font-bold text-slate-800">{cat.name}</h4>
-                        <p className="text-indigo-600 font-black text-2xl mt-2">{cat.price} <span className="text-sm font-normal text-slate-400">ر.س</span></p>
+                        <p className="text-indigo-600 font-black text-2xl mt-2">{cat.price} <span className="text-sm font-normal text-slate-400">ر.ي</span></p>
                       </div>
                       <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button 
@@ -1098,7 +1167,7 @@ export default function App() {
                           ))}
                         </Pie>
                         <Tooltip 
-                          formatter={(value: number) => [`${value.toLocaleString()} ر.س`, 'القيمة']}
+                          formatter={(value: number) => [`${value.toLocaleString()} ر.ي`, 'القيمة']}
                           contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                         />
                       </PieChart>
@@ -1273,7 +1342,7 @@ export default function App() {
               />
             </div>
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">السعر (ر.س)</label>
+              <label className="block text-sm font-bold text-slate-700 mb-2">السعر (ر.ي)</label>
               <input 
                 name="price" 
                 type="number"
